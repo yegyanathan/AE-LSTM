@@ -11,15 +11,28 @@ from torch.utils.data.dataset import random_split
 
 class TehranDataset(Dataset):
 
+    """
+    Tehran Stock Exchange (TSE) dataset
+    :Param X_scaled: normalized x
+    :Param y_scaled: normalized y
+    :Param timestep: number of days to look behind.
+    
+    """
+
     features = ['<OPEN>','<HIGH>','<LOW>','<CLOSE>','<VOL>']
     
-    def __init__(self, X_scaled, y_scaled, timestep):
+    def __init__(self, 
+                    X_scaled,
+                    y_scaled, 
+                    timestep):
         
         self.X_scaled = X_scaled
         self.y_scaled = y_scaled
         self.timestep = timestep
 
-        self.data_X, self.data_Y = TehranDataset.create_dataset(X_scaled, y_scaled, timestep)
+        self.data_X, self.data_Y = TehranDataset.create_dataset(X_scaled,
+                                                                    y_scaled,
+                                                                    timestep)
         
 
     @staticmethod
@@ -32,7 +45,7 @@ class TehranDataset(Dataset):
             dataX.append(X[i - time_step : i, 0 : 5])
             dataY.append(y[i, 0 : 5])
             
-        return np.array(dataX), np.array(dataY).squeeze()
+        return np.array(dataX), np.array(dataY)
     
 
     def __len__(self):
@@ -46,18 +59,19 @@ class TehranDataset(Dataset):
         timestep_y = self.data_Y[index]
 
         timestep_X = torch.tensor(timestep_X)
-        timestep_y = torch.tensor(timestep_y).unsqueeze(0)
+        timestep_y = torch.tensor(timestep_y)
 
         return timestep_X.float(), timestep_y.float()
 
 
 
 
-def get_loader(dataset, batch_size = 1, shuffle = True, pin_memory = True):
+def get_loader(dataset, batch_size, num_workers = 2, shuffle = False, drop_last = True):
 
     loader = DataLoader(dataset = dataset,
-                         batch_size=batch_size, 
-                         shuffle = True, 
-                         drop_last = True)
+                         batch_size = batch_size, 
+                         num_workers = num_workers,
+                         shuffle = shuffle, 
+                         drop_last = drop_last)
 
     return loader

@@ -1,12 +1,7 @@
 import torch
-import torch.nn as nn
-import pandas as pd
-import numpy as np
-import math
-from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
-from torch.utils.data.dataset import random_split
+from utils import create_dataset
 
 
 class TehranDataset(Dataset):
@@ -16,37 +11,26 @@ class TehranDataset(Dataset):
     :Param X_scaled: normalized x
     :Param y_scaled: normalized y
     :Param timestep: number of days to look behind.
+    :Param k_days: k days forecast
     
     """
-
-    features = ['<OPEN>','<HIGH>','<LOW>','<CLOSE>','<VOL>']
     
     def __init__(self, 
                     X_scaled,
                     y_scaled, 
-                    timestep):
+                    timestep,
+                    k_days):
         
         self.X_scaled = X_scaled
         self.y_scaled = y_scaled
         self.timestep = timestep
+        self.k_days = k_days
 
-        self.data_X, self.data_Y = TehranDataset.create_dataset(X_scaled,
-                                                                    y_scaled,
-                                                                    timestep)
-        
+        self.data_X, self.data_Y = create_dataset(X_scaled,
+                                                    y_scaled,
+                                                    timestep,
+                                                    k_days)
 
-    @staticmethod
-    def create_dataset(X, y, time_step = 1):
-
-        dataX, dataY = [], []
-        
-        for i in range(time_step, len(X)):
-
-            dataX.append(X[i - time_step : i, 0 : 5])
-            dataY.append(y[i, 0 : 5])
-            
-        return np.array(dataX), np.array(dataY)
-    
 
     def __len__(self):
         

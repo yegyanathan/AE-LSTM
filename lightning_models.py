@@ -1,3 +1,4 @@
+from pyexpat import model
 import torch
 import torch.nn as nn
 import pandas as pd
@@ -5,9 +6,10 @@ from sklearn.preprocessing import MinMaxScaler
 
 import pytorch_lightning as pl
 from torchmetrics import MeanAbsoluteError, MeanSquaredError
-from pytorch_models import PredictNextTimestep, AELSTM
+from pytorch_models import forecastLSTM, AELSTM
 from loader import TehranDataset, get_loader
-from utils import train_val_test_split
+from utils import train_val_test_split, return_based, log_return_based, returns_direction
+
 
 """
 Training args:
@@ -24,7 +26,8 @@ Model args:
     output_layer_size       -> 5
     num_layers              -> 1, 2, 3
     dropout                 -> 0.21, 0.5 
-    timestep                -> 10
+    timestep                -> 100
+    k_days                  -> 10
 
 Program args:
 
@@ -33,7 +36,7 @@ Program args:
 """
 
 
-class LSTMPredictor(pl.LightningModule):
+class ForecastLSTM(pl.LightningModule):
 
     """
     Lightning MOdule for the pure LSTM architecture.
@@ -57,13 +60,16 @@ class LSTMPredictor(pl.LightningModule):
                 weight_decay,
                 input_size = 5,
                 hidden_size = 128,
-                output_layer_size = 5,
+                hidden_layer_size = 64,
+                k_days = 30,
                 num_layers = 2,
-                prob = 0.21,
-                timestep = 10,
+                prob = 0.5,
+                timestep = 90,
                 ):
 
-        super(LSTMPredictor, self).__init__()
+        super(ForecastLSTM, self).__init__()
+
+        self.save_hyperparameters()
 
         self.data_path = data_path
         self.split = split
@@ -72,39 +78,53 @@ class LSTMPredictor(pl.LightningModule):
         self.weight_decay = weight_decay
         self.input_size = input_size
         self.hidden_size = hidden_size
-        self.output_layer_size = output_layer_size
+        self.hidden_layer_size = hidden_layer_size
+        self.k_days = k_days
         self.num_layers = num_layers
         self.timestep = timestep
         self.prob = prob
 
 
-        self.model = PredictNextTimestep(input_size = input_size,
-                                            hidden_size = hidden_size,
-                                            output_layer_size = output_layer_size,
-                                            num_layers = num_layers,
-                                            prob = prob)
+        self.model = forecastLSTM(input_size = input_size,
+                                    hidden_size = hidden_size,
+                                    hidden_layer_size = hidden_layer_size,
+                                    num_layers = num_layers,
+                                    k_days = k_days,
+                                    prob = prob,)
 
         self.loss = nn.MSELoss().cuda() if torch.cuda.is_available() else nn.MSELoss()
-
-        self.scaler_X = MinMaxScaler(feature_range = (0,1))
-        self.scaler_y = MinMaxScaler(feature_range = (0,1))
 
         self.mean_absolute_error = MeanAbsoluteError()
         self.mean_squared_error = MeanSquaredError()
 
 
+
     def setup(self, stage):
 
-        df = pd.read_csv('Dataset/IKCO1.csv', index_col = [0])
+        df = pd.read_csv(self.data_path, index_col = [0])
+        df = df[:2000]
 
-        X = df[['<OPEN>','<HIGH>','<LOW>','<CLOSE>','<VOL>']]
-        y = df[['<OPEN>','<HIGH>','<LOW>','<CLOSE>','<VOL>']]
+        df = df[['<OPEN>','<HIGH>','<LOW>','<CLOSE>','<VOL>']]
+        df['<CLOSE>_rb'] = pd.DataFrame(return_based(df['<CLOSE>'], 21))
+        df['<OPEN>_rb'] = pd.DataFrame(return_based(df['<OPEN>'], 21))
+        df['<HIGH>_rb'] = pd.DataFrame(return_based(df['<HIGH>'], 21))
+        df['<LOW>_rb'] = pd.DataFrame(return_based(df['<LOW>'], 21))
+        df['<VOL>_rb'] = pd.DataFrame(log_return_based(df['<VOL>'], 21))
+        df['returns'] = pd.DataFrame(returns_direction(df))
+
+        df = df[21:]
+
+        X = df[['<OPEN>_rb', '<HIGH>_rb', '<LOW>_rb', '<CLOSE>_rb', '<VOL>_rb']]
+        y = df[['returns']]
 
         X_train, X_val, X_test = train_val_test_split(X, self.split)
         y_train, y_val, y_test = train_val_test_split(y, self.split)
 
-        X_train_scaled = self.scaler_X.fit_transform(X_train)
-        y_train_scaled = self.scaler_y.fit_transform(y_train)
+        self.scaler_X = MinMaxScaler(feature_range = (0,1)).fit(X_train)
+        self.scaler_y = MinMaxScaler(feature_range = (0,1)).fit(y_train)
+
+        X_train_scaled = self.scaler_X.transform(X_train)
+        y_train_scaled = self.scaler_y.transform(y_train)
 
         X_val_scaled = self.scaler_X.transform(X_val)
         y_val_scaled = self.scaler_y.transform(y_val)
@@ -115,15 +135,30 @@ class LSTMPredictor(pl.LightningModule):
 
         self.train_ds = TehranDataset(X_train_scaled,
                                         y_train_scaled, 
-                                        timestep = self.timestep)
+                                        timestep = self.timestep,
+                                        k_days = self.k_days)
 
         self.validation_ds = TehranDataset(X_val_scaled,
                                         y_val_scaled, 
-                                        timestep = self.timestep)
+                                        timestep = self.timestep,
+                                        k_days = self.k_days)
 
         self.test_ds = TehranDataset(X_test_scaled,
                                 y_test_scaled, 
-                                timestep = self.timestep)
+                                timestep = self.timestep,
+                                k_days = self.k_days)
+
+
+    def on_save_checkpoint(self, checkpoint):
+
+        checkpoint['scaler_X'] = self.scaler_X
+        checkpoint['scaler_y'] = self.scaler_y
+
+
+    def on_load_checkpoint(self, checkpoint):
+
+        self.scaler_X = checkpoint['scaler_X']
+        self.scaler_y = checkpoint['scaler_y']
 
 
     def train_dataloader(self):
@@ -132,6 +167,7 @@ class LSTMPredictor(pl.LightningModule):
 
     def val_dataloader(self):
         return get_loader(self.validation_ds, self.batch_size)
+
 
     def test_dataloader(self):
         return get_loader(self.test_ds, self.batch_size)
@@ -147,7 +183,7 @@ class LSTMPredictor(pl.LightningModule):
                 "lr_scheduler": {
                     "scheduler": torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer = optimizer,
                                                                             mode = 'min',
-                                                                            patience = 8),                                                             
+                                                                            patience = 10),                                                             
                     "monitor": "val_loss",
                 }
             }
@@ -199,6 +235,7 @@ class LSTMPredictor(pl.LightningModule):
 
         return {**out, 'log': out}
 
+
     def test_step(self, batch, batch_idx):
 
         X, y = batch
@@ -221,6 +258,7 @@ class LSTMPredictor(pl.LightningModule):
         return {'MAE': self.mean_absolute_error,
                     'MSE' : self.mean_squared_error,
                     'log': {'MAE': self.mean_absolute_error, 'MSE' : self.mean_squared_error}}
+
 
 
 class AELSTMPredictor(pl.LightningModule):
@@ -251,13 +289,16 @@ class AELSTMPredictor(pl.LightningModule):
                 intr_size = 3,
                 code_size = 2,
                 hidden_size = 128,
-                output_layer_size = 5,
-                num_layers = 2,
+                hidden_layer_size = 32,
+                num_layers = 3,
                 prob = 0.21,
-                timestep = 10,
+                timestep = 100,
+                k_days = 10
                 ):
 
         super(AELSTMPredictor, self).__init__()
+
+        self.save_hyperparameters()
 
         self.data_path = data_path
         self.learning_rate = learning_rate
@@ -265,41 +306,55 @@ class AELSTMPredictor(pl.LightningModule):
         self.batch_size = batch_size
         self.input_size = input_size
         self.hidden_size = hidden_size
-        self.output_layer_size = output_layer_size
+        self.hidden_layer_size = hidden_layer_size
         self.num_layers = num_layers
         self.timestep = timestep
         self.prob = prob
         self.split = split
+        self.k_days = k_days
 
 
         self.model = AELSTM(input_size = input_size,
                                 code_size = code_size,
                                 intr_size = intr_size,
                                 hidden_size = hidden_size,
-                                output_layer_size = output_layer_size,
+                                hidden_layer_size = hidden_layer_size,
                                 num_layers = num_layers,
-                                prob = prob)
+                                prob = prob,
+                                k_days = k_days)
 
         self.loss = nn.MSELoss().cuda() if torch.cuda.is_available() else nn.MSELoss()
 
-        self.scaler_X = MinMaxScaler(feature_range = (0,1))
-        self.scaler_y = MinMaxScaler(feature_range = (0,1))
-
         self.mean_absolute_error = MeanAbsoluteError()
         self.mean_squared_error = MeanSquaredError()
+        
 
     def setup(self, stage):
 
         df = pd.read_csv(self.data_path, index_col = [0])
+        df = df[:2000]
 
-        X = df[['<OPEN>','<HIGH>','<LOW>','<CLOSE>','<VOL>']]
-        y = df[['<OPEN>','<HIGH>','<LOW>','<CLOSE>','<VOL>']]
+        df = df[['<OPEN>','<HIGH>','<LOW>','<CLOSE>','<VOL>']]
+        df['<CLOSE>_rb'] = pd.DataFrame(return_based(df['<CLOSE>'], 21))
+        df['<OPEN>_rb'] = pd.DataFrame(return_based(df['<OPEN>'], 21))
+        df['<HIGH>_rb'] = pd.DataFrame(return_based(df['<HIGH>'], 21))
+        df['<LOW>_rb'] = pd.DataFrame(return_based(df['<LOW>'], 21))
+        df['<VOL>_rb'] = pd.DataFrame(log_return_based(df['<VOL>'], 21))
+        df['returns'] = pd.DataFrame(returns_direction(df))
+
+        df = df[21:]
+
+        X = df[['<OPEN>_rb', '<HIGH>_rb', '<LOW>_rb', '<CLOSE>_rb', '<VOL>_rb']]
+        y = df[['returns']]
 
         X_train, X_val, X_test = train_val_test_split(X, self.split)
         y_train, y_val, y_test = train_val_test_split(y, self.split)
 
-        X_train_scaled = self.scaler_X.fit_transform(X_train)
-        y_train_scaled = self.scaler_y.fit_transform(y_train)
+        self.scaler_X = MinMaxScaler(feature_range = (0,1)).fit(X_train)
+        self.scaler_y = MinMaxScaler(feature_range = (0,1)).fit(y_train)
+
+        X_train_scaled = self.scaler_X.transform(X_train)
+        y_train_scaled = self.scaler_y.transform(y_train)
 
         X_val_scaled = self.scaler_X.transform(X_val)
         y_val_scaled = self.scaler_y.transform(y_val)
@@ -309,16 +364,32 @@ class AELSTMPredictor(pl.LightningModule):
 
 
         self.train_ds = TehranDataset(X_train_scaled,
-                                    y_train_scaled, 
-                                    self.timestep)
+                                        y_train_scaled, 
+                                        timestep = self.timestep,
+                                        k_days = self.k_days)
 
         self.validation_ds = TehranDataset(X_val_scaled,
-                                    y_val_scaled, 
-                                    self.timestep)
+                                        y_val_scaled, 
+                                        timestep = self.timestep,
+                                        k_days = self.k_days)
 
         self.test_ds = TehranDataset(X_test_scaled,
                                 y_test_scaled, 
-                                self.timestep)
+                                timestep = self.timestep,
+                                k_days = self.k_days)
+
+
+    def on_save_checkpoint(self, checkpoint):
+
+        checkpoint['scaler_X'] = self.scaler_X
+        checkpoint['scaler_y'] = self.scaler_y
+
+
+    def on_load_checkpoint(self, checkpoint):
+
+        self.scaler_X = checkpoint['scaler_X']
+        self.scaler_y = checkpoint['scaler_y']
+
 
     def forward(self, x):
 
@@ -331,9 +402,11 @@ class AELSTMPredictor(pl.LightningModule):
 
         return get_loader(self.train_ds, self.batch_size)
 
+
     def val_dataloader(self):
 
         return get_loader(self.validation_ds, self.batch_size)
+
 
     def test_dataloader(self):
 
@@ -350,14 +423,12 @@ class AELSTMPredictor(pl.LightningModule):
                 "lr_scheduler": {
                     "scheduler": torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer = optimizer,
                                                                             mode = 'min',
-                                                                            patience = 8),                                                             
+                                                                            patience = 10),                                                             
                     "monitor": "val_loss",
                 }
             }
 
         
-
-
     def training_step(self, batch, batch_idx):
 
         X, y = batch
@@ -368,15 +439,15 @@ class AELSTMPredictor(pl.LightningModule):
 
         loss = loss1 + loss2
 
+        self.log(name = 'lstm_loss',
+            value = loss1,
+            on_step = False,
+            on_epoch = True,
+            prog_bar = False,
+            logger = True)
+
         self.log(name = 'decoder_loss',
                     value = loss2,
-                    on_step = False,
-                    on_epoch = True,
-                    prog_bar = False,
-                    logger = True)
-
-        self.log(name = 'lstm_loss',
-                    value = loss1,
                     on_step = False,
                     on_epoch = True,
                     prog_bar = False,

@@ -1,6 +1,9 @@
+from matplotlib.pyplot import axis
 import torch
 import torch.nn as nn
+import numpy as np
 import pandas as pd
+from transformers import EncoderDecoderConfig
 
 
 class Encoder(nn.Module):
@@ -130,36 +133,47 @@ class Decoder(nn.Module):
         return reproduced_X
 
 
-class PredictNextTimestep(nn.Module):
+class forecastLSTM(nn.Module):
 
     """
     Class that encapsulates the pure LSTM architecture.
     :Param input_size: LSTM input size
     :Param hidden_size: LSTM hidden size
-    :Param output_layer_size: Fully connected output layer size
     :Param num_layers: LSTM layers
-    :Param prob: Dropout probability
 
     """
 
     def __init__(self, 
                     input_size,
                     hidden_size,
-                    output_layer_size,
+                    hidden_layer_size,
                     num_layers,
+                    k_days,
                     prob):
 
-        super().__init__()
+        super(forecastLSTM, self).__init__()
+
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.hidden_layer_size = hidden_layer_size
+        self.num_layers = num_layers
+        self.k_days = k_days
+        self.prob = prob
 
         self.lstm = nn.LSTM(input_size, 
                                 hidden_size, 
                                 num_layers, 
                                 batch_first = True)
 
-        self.fc = nn.Linear(hidden_size, 
-                                output_layer_size)
+        self.fc1 = nn.Linear(hidden_size, 
+                                hidden_layer_size)
+
+        self.fc2 = nn.Linear(hidden_layer_size, 
+                                k_days)
 
         self.dropout = nn.Dropout(p = prob)
+
+        self.init_weights()
 
     def init_weights(self):
 
@@ -177,8 +191,11 @@ class PredictNextTimestep(nn.Module):
             elif 'weight_hh' in name:
                  nn.init.orthogonal_(param)
 
-        nn.init.kaiming_uniform_(self.fc.weight.data)
-        nn.init.constant_(self.fc.weight.data, 0)
+        nn.init.kaiming_uniform_(self.fc1.weight.data)
+        nn.init.constant_(self.fc1.weight.data, 0)
+
+        nn.init.kaiming_uniform_(self.fc2.weight.data)
+        nn.init.constant_(self.fc2.weight.data, 0)
 
     def forward(self, x):
 
@@ -189,9 +206,16 @@ class PredictNextTimestep(nn.Module):
         """
         
         output, (h,c) = self.lstm(x)
-        pred = self.dropout(self.fc(h[-1]))
+        #print(output.shape)
+        #print('context:',h[-1].shape)
+        #print(output[-1].shape)
+        
+
+        pred = self.dropout(self.fc1(h[-1]))
+        pred = self.fc2(pred)
 
         return pred
+
 
 
 class AELSTM(nn.Module):
@@ -202,11 +226,19 @@ class AELSTM(nn.Module):
                 ___ AE decoder
                /
     AE encoder 
-               \___ Predictor decoder
+               \___ forecast
     
     """
 
-    def __init__(self, input_size, code_size, intr_size, hidden_size, output_layer_size,  num_layers, prob):
+    def __init__(self,
+                    input_size, 
+                    code_size, 
+                    intr_size, 
+                    hidden_size, 
+                    hidden_layer_size,  
+                    num_layers, 
+                    prob,
+                    k_days):
 
         """
         :param input_size: feature size
@@ -225,17 +257,23 @@ class AELSTM(nn.Module):
         self.code_size = code_size
         self.intr_size = intr_size
         self.hidden_size = hidden_size
-        self.output_layer_size = output_layer_size
+        self.hidden_layer_size = hidden_layer_size
         self.num_layers = num_layers
         self.prob = prob
+        self.k_days = k_days
 
         self.AEencoder = Encoder(input_size, code_size, intr_size, 1)
         self.AEdecoder = Decoder(input_size, code_size, intr_size, 1)
 
-        self.Predictor = PredictNextTimestep(code_size, hidden_size, output_layer_size, num_layers, prob)
+        self.forecast = forecastLSTM(code_size,
+                                            hidden_size,
+                                            hidden_layer_size, 
+                                            num_layers, 
+                                            k_days,
+                                            prob)
 
         
-    def forward(self, X):
+    def forward(self, batch):
 
         """
         Forward propagation.
@@ -244,10 +282,10 @@ class AELSTM(nn.Module):
 
         """
 
-        code = self.AEencoder(X)
+        code = self.AEencoder(batch)
 
         reproduced_X = self.AEdecoder(code)
 
-        prediction = self.Predictor(code)
+        prediction = self.forecast(code)
 
         return prediction, reproduced_X

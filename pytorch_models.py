@@ -135,29 +135,17 @@ class Decoder(nn.Module):
 
 class forecastLSTM(nn.Module):
 
-    """
-    Class that encapsulates the pure LSTM architecture.
-    :Param input_size: LSTM input size
-    :Param hidden_size: LSTM hidden size
-    :Param num_layers: LSTM layers
-
-    """
-
     def __init__(self, 
                     input_size,
                     hidden_size,
-                    hidden_layer_size,
                     num_layers,
-                    k_days,
                     prob):
 
         super(forecastLSTM, self).__init__()
 
         self.input_size = input_size
         self.hidden_size = hidden_size
-        self.hidden_layer_size = hidden_layer_size
         self.num_layers = num_layers
-        self.k_days = k_days
         self.prob = prob
 
         self.lstm = nn.LSTM(input_size, 
@@ -165,11 +153,7 @@ class forecastLSTM(nn.Module):
                                 num_layers, 
                                 batch_first = True)
 
-        self.fc1 = nn.Linear(hidden_size, 
-                                hidden_layer_size)
-
-        self.fc2 = nn.Linear(hidden_layer_size, 
-                                k_days)
+        self.fc = nn.Linear(hidden_size, 1)
 
         self.dropout = nn.Dropout(p = prob)
 
@@ -177,11 +161,6 @@ class forecastLSTM(nn.Module):
 
     def init_weights(self):
 
-        """
-        
-        Initializes the parameters of the model.
-        
-        """
 
         for name, param in self.lstm.named_parameters():
             if 'bias' in name:
@@ -191,44 +170,21 @@ class forecastLSTM(nn.Module):
             elif 'weight_hh' in name:
                  nn.init.orthogonal_(param)
 
-        nn.init.kaiming_uniform_(self.fc1.weight.data)
-        nn.init.constant_(self.fc1.weight.data, 0)
+        nn.init.kaiming_uniform_(self.fc.weight.data)
+        nn.init.constant_(self.fc.weight.data, 0)
 
-        nn.init.kaiming_uniform_(self.fc2.weight.data)
-        nn.init.constant_(self.fc2.weight.data, 0)
 
     def forward(self, x):
+        
+        output, (h,c) = self.lstm(x)        
 
-        """
-        Param x: tensor of dimension (batch_size, timestep, input_size)
-        returns: next timestep of dimension (batch_size, input_size)
-        
-        """
-        
-        output, (h,c) = self.lstm(x)
-        #print(output.shape)
-        #print('context:',h[-1].shape)
-        #print(output[-1].shape)
-        
-
-        pred = self.dropout(self.fc1(h[-1]))
-        pred = self.fc2(pred)
+        pred = self.dropout(self.fc(h[-1]))
 
         return pred
 
 
-
 class AELSTM(nn.Module):
 
-    """ 
-    Class that encapsulates the AE-LSTM composite architecture.
-
-                ___ AE decoder
-               /
-    AE encoder 
-               \___ forecast
-    
-    """
 
     def __init__(self,
                     input_size, 
@@ -240,16 +196,6 @@ class AELSTM(nn.Module):
                     prob,
                     k_days):
 
-        """
-        :param input_size: feature size
-        :param code_size: compressed representation
-        :param intermediate_size: size of the hidden fully connected layer
-        :param hidden_size: hidden size of the LSTM
-        :param hidden_layer_size: size of fully connected hidden layer
-        :param num_layer: number of layers
-        :param look_ahead: number of days for forecasting
-        
-        """
 
         super(AELSTM, self).__init__()
 
@@ -275,13 +221,6 @@ class AELSTM(nn.Module):
         
     def forward(self, batch):
 
-        """
-        Forward propagation.
-        :param X: input tensor, a tensor of dimension (batch_size, timesteps, input_size)
-        :return: prediction for the next 'look_ahead' days, reproduced input tensor
-
-        """
-
         code = self.AEencoder(batch)
 
         reproduced_X = self.AEdecoder(code)
@@ -289,3 +228,5 @@ class AELSTM(nn.Module):
         prediction = self.forecast(code)
 
         return prediction, reproduced_X
+
+

@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 import math
 from statsmodels.tsa.stattools import adfuller, kpss
-import torch
 
 
 
@@ -16,18 +15,6 @@ def train_val_test_split(df, split):
     test = df[val_lower_bound:]
 
     return train, val, test
-
-
-def create_dataset(X, y, time_step, k_days):
-
-    dataX, dataY = [], []
-    
-    for i in range(time_step, len(X) - k_days):
-
-        dataX.append(X[i - time_step : i, 0 : 5])
-        dataY.append(y[i : i + k_days])
-        
-    return np.array(dataX), np.array(dataY).squeeze()
 
 
 def adf_test(timeseries):
@@ -54,47 +41,31 @@ def kpss_test(timeseries):
     print (kpss_output)
 
 
+def transform_data(df):
 
-def return_based(timeseries, lookback):
+    df = df[['<OPEN>','<HIGH>','<LOW>','<CLOSE>','<VOL>']]
 
-    list = []
-
-    for i in range(21):
-        list.append(np.nan)
-
-    for i in range(lookback, len(timeseries)):
-
-        median = timeseries[:i][-lookback:].median()
-        scaled = timeseries[i] / median
-        list.append(scaled)
-
-    return list
+    df['<CLOSE>_p'] = df[['<CLOSE>']].diff(1)
+    df['<OPEN>_p'] = df[['<OPEN>']].diff(1)
+    df['<HIGH>_p'] = df[['<HIGH>']].diff(1)
+    df['<LOW>_p'] = df[['<LOW>']].diff(1)
+    df['<VOL>_p'] = np.log(df[['<VOL>']]).diff(1)
+    df = df[1:]
 
 
-def log_return_based(timeseries, lookback):
+    df_X = df[['<OPEN>_p', '<HIGH>_p', '<LOW>_p', '<CLOSE>_p', '<VOL>_p']]
+    df_y = df[['<CLOSE>']]
 
-    list = []
-
-    timeseries = np.log(timeseries)
-
-    for i in range(21):
-        list.append(np.nan)
-
-    for i in range(lookback, len(timeseries)):
-
-        median = timeseries[:i][-lookback:].median()
-        sub = timeseries[i] - median
-        list.append(sub)
-
-    return list
+    return df_X, df_y
 
 
-def returns_direction(df):
+def create_dataset(X, y, time_step, k_days):
 
-    list = []
+    dataX, dataY = [], []
+    
+    for i in range(time_step, len(X) - k_days):
 
-    for index, row in df.iterrows():
-        sub = row['<CLOSE>'] - row['<OPEN>']
-        list.append(sub)
-
-    return list
+        dataX.append(X[i - time_step : i])
+        dataY.append(y[i : i + k_days].max())
+        
+    return np.array(dataX), np.array(dataY).squeeze()

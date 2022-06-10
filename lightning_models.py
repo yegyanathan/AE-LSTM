@@ -8,49 +8,12 @@ import pytorch_lightning as pl
 from torchmetrics import MeanAbsoluteError, MeanSquaredError
 from pytorch_models import forecastLSTM, AELSTM
 from loader import TehranDataset, get_loader
-from utils import train_val_test_split, return_based, log_return_based, returns_direction
+from utils import train_val_test_split
 
 
-"""
-Training args:
 
-    accelerator             -> gpu cpu
-    max_epochs              -> 10, 20, 30
-    batch_size              -> 32, 64, 128
-    callbacks               -> [ModelCheckpoint, EarlyStopping]
+class ForecastNextKDays(pl.LightningModule):
 
-Model args:
-
-    input_size              -> 5
-    hidden_size             -> 128, 256
-    output_layer_size       -> 5
-    num_layers              -> 1, 2, 3
-    dropout                 -> 0.21, 0.5 
-    timestep                -> 100
-    k_days                  -> 10
-
-Program args:
-
-    data_path               -> 'Dataset/IKCO1.csv'
-
-"""
-
-
-class ForecastLSTM(pl.LightningModule):
-
-    """
-    Lightning MOdule for the pure LSTM architecture.
-    :Param data_path: file path of the csv file.
-    :Param learning_rate: learning rate of the optimizer.
-    :Oaram batch_size: batch size of the model.
-    :Param input_size: LSTM input size
-    :Param hidden_size: LSTM hidden size
-    :Param output_layer_size: Fully connected output layer size
-    :Param num_layers: LSTM layers
-    :Param prob: Dropout probability
-    :Param timestep: number of days to look behind.
-
-    """
 
     def __init__(self,
                 data_path,
@@ -60,14 +23,12 @@ class ForecastLSTM(pl.LightningModule):
                 weight_decay,
                 input_size = 5,
                 hidden_size = 128,
-                hidden_layer_size = 64,
-                k_days = 30,
-                num_layers = 2,
+                k_days = 10,
+                num_layers = 4,
                 prob = 0.5,
-                timestep = 90,
-                ):
+                timestep = 20,):
 
-        super(ForecastLSTM, self).__init__()
+        super(ForecastNextKDays, self).__init__()
 
         self.save_hyperparameters()
 
@@ -78,7 +39,6 @@ class ForecastLSTM(pl.LightningModule):
         self.weight_decay = weight_decay
         self.input_size = input_size
         self.hidden_size = hidden_size
-        self.hidden_layer_size = hidden_layer_size
         self.k_days = k_days
         self.num_layers = num_layers
         self.timestep = timestep
@@ -87,9 +47,7 @@ class ForecastLSTM(pl.LightningModule):
 
         self.model = forecastLSTM(input_size = input_size,
                                     hidden_size = hidden_size,
-                                    hidden_layer_size = hidden_layer_size,
                                     num_layers = num_layers,
-                                    k_days = k_days,
                                     prob = prob,)
 
         self.loss = nn.MSELoss().cuda() if torch.cuda.is_available() else nn.MSELoss()
@@ -102,23 +60,12 @@ class ForecastLSTM(pl.LightningModule):
     def setup(self, stage):
 
         df = pd.read_csv(self.data_path, index_col = [0])
-        df = df[:2000]
 
-        df = df[['<OPEN>','<HIGH>','<LOW>','<CLOSE>','<VOL>']]
-        df['<CLOSE>_rb'] = pd.DataFrame(return_based(df['<CLOSE>'], 21))
-        df['<OPEN>_rb'] = pd.DataFrame(return_based(df['<OPEN>'], 21))
-        df['<HIGH>_rb'] = pd.DataFrame(return_based(df['<HIGH>'], 21))
-        df['<LOW>_rb'] = pd.DataFrame(return_based(df['<LOW>'], 21))
-        df['<VOL>_rb'] = pd.DataFrame(log_return_based(df['<VOL>'], 21))
-        df['returns'] = pd.DataFrame(returns_direction(df))
+        df_X = df[['<OPEN>','<HIGH>','<LOW>','<CLOSE>','<VOL>']] 
+        df_y = df[['<CLOSE>']]
 
-        df = df[21:]
-
-        X = df[['<OPEN>_rb', '<HIGH>_rb', '<LOW>_rb', '<CLOSE>_rb', '<VOL>_rb']]
-        y = df[['returns']]
-
-        X_train, X_val, X_test = train_val_test_split(X, self.split)
-        y_train, y_val, y_test = train_val_test_split(y, self.split)
+        X_train, X_val, X_test = train_val_test_split(df_X, self.split)
+        y_train, y_val, y_test = train_val_test_split(df_y, self.split)
 
         self.scaler_X = MinMaxScaler(feature_range = (0,1)).fit(X_train)
         self.scaler_y = MinMaxScaler(feature_range = (0,1)).fit(y_train)
@@ -178,15 +125,8 @@ class ForecastLSTM(pl.LightningModule):
         optimizer = torch.optim.Adam(self.model.parameters(),
                                     lr = self.learning_rate,
                                     weight_decay = self.weight_decay)
-        return {
-                "optimizer": optimizer,
-                "lr_scheduler": {
-                    "scheduler": torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer = optimizer,
-                                                                            mode = 'min',
-                                                                            patience = 10),                                                             
-                    "monitor": "val_loss",
-                }
-            }
+
+        return optimizer
 
     
     def forward(self, x):
@@ -240,20 +180,16 @@ class ForecastLSTM(pl.LightningModule):
 
         X, y = batch
 
+        if len(y.size()) == 1:
+            y = y.unsqueeze(1)
+
         outputs = self.model(X)
 
-        self.mean_absolute_error(outputs, y)
-        self.mean_squared_error(outputs, y)
+        MAE = self.mean_absolute_error(outputs, y)
+        MSE = self.mean_squared_error(outputs, y)
 
-        self.log(name = 'MAE',
-                    value = self.mean_absolute_error,
-                    on_epoch = True,
-                    logger = True)
-
-        self.log(name = 'MSE',
-            value = self.mean_squared_error,
-            on_epoch = True,
-            logger = True)
+        self.log(name = 'MAE', value = MAE, on_epoch=True, logger=True)
+        self.log(name = 'MSE', value = MSE, on_epoch=True, logger=True)
 
         return {'MAE': self.mean_absolute_error,
                     'MSE' : self.mean_squared_error,
@@ -263,21 +199,7 @@ class ForecastLSTM(pl.LightningModule):
 
 class AELSTMPredictor(pl.LightningModule):
 
-    """
-    Lightning MOdule for the pure LSTM architecture.
-    :Param data_path: file path of the csv file.
-    :Param learning_rate: learning rate of the optimizer.
-    :Oaram batch_size: batch size of the model.
-    :Param input_size: Autoencoder input size
-    :Param intr_size: Autoencoder input size
-    :Param code_size: LSTM input size / Autoencoder code size
-    :Param hidden_size: LSTM hidden size
-    :Param output_layer_size: Fully connected output layer size
-    :Param num_layers: LSTM layers
-    :Param prob: Dropout probability
-    :Param timestep: number of days to look behind.
 
-    """
 
     def __init__(self,
                 data_path,
@@ -291,7 +213,7 @@ class AELSTMPredictor(pl.LightningModule):
                 hidden_size = 128,
                 hidden_layer_size = 32,
                 num_layers = 3,
-                prob = 0.21,
+                prob = 0,
                 timestep = 100,
                 k_days = 10
                 ):
@@ -323,7 +245,7 @@ class AELSTMPredictor(pl.LightningModule):
                                 prob = prob,
                                 k_days = k_days)
 
-        self.loss = nn.MSELoss().cuda() if torch.cuda.is_available() else nn.MSELoss()
+        self.loss = nn.L1Loss().cuda() if torch.cuda.is_available() else nn.L1Loss()
 
         self.mean_absolute_error = MeanAbsoluteError()
         self.mean_squared_error = MeanSquaredError()
@@ -332,23 +254,11 @@ class AELSTMPredictor(pl.LightningModule):
     def setup(self, stage):
 
         df = pd.read_csv(self.data_path, index_col = [0])
-        df = df[:2000]
 
-        df = df[['<OPEN>','<HIGH>','<LOW>','<CLOSE>','<VOL>']]
-        df['<CLOSE>_rb'] = pd.DataFrame(return_based(df['<CLOSE>'], 21))
-        df['<OPEN>_rb'] = pd.DataFrame(return_based(df['<OPEN>'], 21))
-        df['<HIGH>_rb'] = pd.DataFrame(return_based(df['<HIGH>'], 21))
-        df['<LOW>_rb'] = pd.DataFrame(return_based(df['<LOW>'], 21))
-        df['<VOL>_rb'] = pd.DataFrame(log_return_based(df['<VOL>'], 21))
-        df['returns'] = pd.DataFrame(returns_direction(df))
+        df_X, df_y = transform_data(df)
 
-        df = df[21:]
-
-        X = df[['<OPEN>_rb', '<HIGH>_rb', '<LOW>_rb', '<CLOSE>_rb', '<VOL>_rb']]
-        y = df[['returns']]
-
-        X_train, X_val, X_test = train_val_test_split(X, self.split)
-        y_train, y_val, y_test = train_val_test_split(y, self.split)
+        X_train, X_val, X_test = train_val_test_split(df_X, self.split)
+        y_train, y_val, y_test = train_val_test_split(df_y, self.split)
 
         self.scaler_X = MinMaxScaler(feature_range = (0,1)).fit(X_train)
         self.scaler_y = MinMaxScaler(feature_range = (0,1)).fit(y_train)
@@ -377,6 +287,7 @@ class AELSTMPredictor(pl.LightningModule):
                                 y_test_scaled, 
                                 timestep = self.timestep,
                                 k_days = self.k_days)
+
 
 
     def on_save_checkpoint(self, checkpoint):
@@ -418,15 +329,7 @@ class AELSTMPredictor(pl.LightningModule):
         optimizer = torch.optim.Adam(self.model.parameters(),
                                     lr = self.learning_rate,
                                     weight_decay = self.weight_decay)
-        return {
-                "optimizer": optimizer,
-                "lr_scheduler": {
-                    "scheduler": torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer = optimizer,
-                                                                            mode = 'min',
-                                                                            patience = 10),                                                             
-                    "monitor": "val_loss",
-                }
-            }
+        return optimizer
 
         
     def training_step(self, batch, batch_idx):
@@ -493,20 +396,16 @@ class AELSTMPredictor(pl.LightningModule):
 
         X, y = batch
 
+        if len(y.size()) == 1:
+            y = y.unsqueeze(1)
+
         outputs, _ = self.model(X)
 
         MAE = self.mean_absolute_error(outputs, y)
         MSE = self.mean_squared_error(outputs, y)
 
-        self.log(name = 'MAE',
-                    value = MAE,
-                    on_epoch = True,
-                    logger = True)
-
-        self.log(name = 'MSE',
-            value = MSE,
-            on_epoch = True,
-            logger = True)
+        self.log(name = 'MAE', value = MAE, on_epoch=True, logger=True)
+        self.log(name = 'MSE', value = MSE, on_epoch=True, logger=True)
 
         return {'MAE': MAE, 'MSE' : MSE, 'log': {'MAE': MAE, 'MSE' : MSE}}
 

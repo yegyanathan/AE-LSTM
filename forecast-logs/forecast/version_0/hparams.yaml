@@ -1,0 +1,14 @@
+batch_size: 64
+data_path: Dataset\IKCO1.csv
+hidden_size: 128
+input_size: 5
+k_days: 10
+learning_rate: 0.0003
+num_layers: 4
+prob: 0
+split:
+- 0.8
+- 0.1
+- 0.1
+timestep: 20
+weight_decay: 0

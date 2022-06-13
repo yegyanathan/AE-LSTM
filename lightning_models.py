@@ -400,3 +400,5 @@ class ForecastNextKDays_Boosted(pl.LightningModule):
         self.log(name = 'MAE', value = MAE, on_epoch=True, logger=True)
 
         return {'MAE': MAE, 'log': {'MAE': MAE}}
+
+

@@ -68,4 +68,4 @@ def create_dataset(X, y, time_step, k_days):
         dataX.append(X[i - time_step : i])
         dataY.append(y[i : i + k_days].max())
         
-    return np.array(dataX), np.array(dataY).squeeze()
+    return np.array(dataX), np.array(dataY)

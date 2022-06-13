@@ -4,6 +4,9 @@ import torch.nn as nn
 import numpy as np
 import pandas as pd
 from transformers import EncoderDecoderConfig
+import torch.nn as nn
+from transformer_encoder.utils import PositionalEncoding
+from transformer_encoder import TransformerEncoder
 
 
 class Encoder(nn.Module):
@@ -138,15 +141,13 @@ class forecastLSTM(nn.Module):
     def __init__(self, 
                     input_size,
                     hidden_size,
-                    num_layers,
-                    prob):
+                    num_layers,):
 
         super(forecastLSTM, self).__init__()
 
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
-        self.prob = prob
 
         self.lstm = nn.LSTM(input_size, 
                                 hidden_size, 
@@ -154,8 +155,6 @@ class forecastLSTM(nn.Module):
                                 batch_first = True)
 
         self.fc = nn.Linear(hidden_size, 1)
-
-        self.dropout = nn.Dropout(p = prob)
 
         self.init_weights()
 
@@ -178,7 +177,7 @@ class forecastLSTM(nn.Module):
         
         output, (h,c) = self.lstm(x)        
 
-        pred = self.dropout(self.fc(h[-1]))
+        pred = self.fc(h[-1])
 
         return pred
 
@@ -191,10 +190,7 @@ class AELSTM(nn.Module):
                     code_size, 
                     intr_size, 
                     hidden_size, 
-                    hidden_layer_size,  
-                    num_layers, 
-                    prob,
-                    k_days):
+                    num_layers,):
 
 
         super(AELSTM, self).__init__()
@@ -203,20 +199,14 @@ class AELSTM(nn.Module):
         self.code_size = code_size
         self.intr_size = intr_size
         self.hidden_size = hidden_size
-        self.hidden_layer_size = hidden_layer_size
         self.num_layers = num_layers
-        self.prob = prob
-        self.k_days = k_days
 
         self.AEencoder = Encoder(input_size, code_size, intr_size, 1)
         self.AEdecoder = Decoder(input_size, code_size, intr_size, 1)
 
         self.forecast = forecastLSTM(code_size,
-                                            hidden_size,
-                                            hidden_layer_size, 
-                                            num_layers, 
-                                            k_days,
-                                            prob)
+                                            hidden_size, 
+                                            num_layers,)
 
         
     def forward(self, batch):

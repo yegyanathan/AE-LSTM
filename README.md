@@ -1,4 +1,4 @@
-# Deep Learning-Based Stock Price Prediction using Composite AE-LSTM Model
+# Deep Learning-Based Stock Price Prediction using AE-LSTM Model
 
 This study focuses on using Deep Learning for predicting the day ahead closing price based on past stock data. The problem is formulated as a multivariate timeseries forecast. For this, the 10 most influential industries in the Tehran Stock Exchange (TSE) were chosen. Seven-year historical data consisting of the Opening value, Highest value, Lowest value, and trading volume (OHLCV) of these stocks were used for training the model. The Deep Learning architecture integrates an Autoencoder (AE) based on LSTM for feature selection and stacked LSTM for predicting the closing price of the stock.
 

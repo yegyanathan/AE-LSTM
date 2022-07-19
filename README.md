@@ -15,8 +15,6 @@ Recurrent Neural Networks (RNN) are a type of Artificial Neural Network that can
 
 **![](https://lh5.googleusercontent.com/g8Htzr2wyY5Rbsi1mvkMOQ93JH17BsbeAM7vlGO6hsI5kkNX5BqYbTQ_o6O56nErAFsSbd6KbhaStA9XueFYmpEGoCR98YVrHocDlPyIAdmv4U_l3o7CWVzNUt-B1ojioH8MDX8jD2Zze-STJhI0mIU)**
 
-![alt text](https://www.google.com/imgres?imgurl=https%3A%2F%2Fwikimedia.org%2Fapi%2Frest_v1%2Fmedia%2Fmath%2Frender%2Fsvg%2F1edbece2559479959fe829e9c6657efb380debe7&imgrefurl=https%3A%2F%2Fen.wikipedia.org%2Fwiki%2FLong_short-term_memory&tbnid=IpIrmxR9j7CTxM&vet=12ahUKEwiszpHhvYX5AhUEgmMGHd41DVUQMygCegUIARDHAQ..i&docid=KUUSnpRkB1yp4M&w=406&h=131&q=lstm%20equations%20&ved=2ahUKEwiszpHhvYX5AhUEgmMGHd41DVUQMygCegUIARDHAQ)
-
 ## Model Training
 The training phase of the AE-LSTM model is composite in nature. Two separate losses are computed simultaneously at each step, in two separate branches of the model. The Encoder-Decoder branch compresses and decompresses the input data, whereas the Encoder-LSTM branch predicts the closing price of the stock using the compressed representation. The reconstruction loss and the loss due to prediction are backpropagated in their respective branches. The data was split into 80% training set - 10% validation set - 10% testing set. Mean Absolute Error (MAE) was used for calculating the loss. ADAM optimizer was used for minimizing the loss function. Early stopping and weight decaying are some methods that were used to prevent the overfitting of the model.
 
